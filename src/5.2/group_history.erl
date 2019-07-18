@@ -9,6 +9,7 @@
 -define(DEFAULT_STATUS, enabled).
 -define(MIN_HISTORY_SIZE, (50*1024)). % 50 kb, in bytes
 -define(DEFAULT_DROP, []).
+-define(DEFAULT_MAX_LINES, 1000).
 -define(DISK_LOG_FORMAT, internal). % since we want repairs
 -define(LOG_NAME, '$#group_history').
 -define(VSN, {0,1,0}).
@@ -198,26 +199,23 @@ ensure_path(Opts) ->
 %% as wrong and returns an empty list to avoid crash loops in the shell.
 -spec read_full_log(term()) -> [string()].
 read_full_log(Name) ->
-    case disk_log:chunk(Name, start) of
-        {error, no_such_log} ->
-            show_unexpected_close_warning(),
-            [];
-        eof ->
-            [];
-        {Cont, Logs} ->
-            lists:reverse(maybe_drop_header(Logs) ++ read_full_log(Name, Cont))
-    end.
+    MaxLines = application:get_env(kernel, shell_history_max_lines, ?DEFAULT_MAX_LINES),
+    read_full_log(Name, start, MaxLines, []).
 
-read_full_log(Name, Cont) ->
+read_full_log(Name, Cont, MaxLines, OldLogs) ->
     case disk_log:chunk(Name, Cont) of
         {error, no_such_log} ->
             show_unexpected_close_warning(),
-            [];
+            OldLogs;
         eof ->
-            [];
+            OldLogs;
         {NextCont, Logs} ->
-            maybe_drop_header(Logs) ++ read_full_log(Name, NextCont)
+            NewLogs = lists:reverse(maybe_drop_header(Logs)) ++ OldLogs,
+            read_full_log(Name, NextCont, MaxLines, sublist(NewLogs, MaxLines))
     end.
+
+sublist(List, L) when length(List) =< L -> List;
+sublist(List, L) -> lists:sublist(List, L).
 
 maybe_drop_header([{vsn, _} | Rest]) -> Rest;
 maybe_drop_header(Logs) -> Logs.
